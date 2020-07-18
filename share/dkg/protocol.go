@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // Board is the interface between the dkg protocol and the external world. It
@@ -19,51 +18,6 @@ type Board interface {
 	IncomingResponse() <-chan ResponseBundle
 	PushJustifications(*JustificationBundle)
 	IncomingJustification() <-chan JustificationBundle
-}
-
-// Phaser must signal on its channel when the protocol should move to a next
-// phase. Phase must be sequential: DealPhase (start), ResponsePhase,
-// JustifPhase and then FinishPhase.
-// Note that if the dkg protocol finishes before the phaser sends the
-// FinishPhase, the protocol will not listen on the channel anymore. This can
-// happen if there is no complaints, or if using the "FastSync" mode.
-// Most of the times, user should use the TimePhaser when using the network, but
-// if one wants to use a smart contract as a board, then the phaser can tick at
-// certain blocks, or when the smart contract tells it.
-type Phaser interface {
-	NextPhase() chan Phase
-}
-
-// TimePhaser is a phaser that sleeps between the different phases and send the
-// signal over its channel.
-type TimePhaser struct {
-	out   chan Phase
-	sleep func(Phase)
-}
-
-func NewTimePhaser(p time.Duration) *TimePhaser {
-	return NewTimePhaserFunc(func(Phase) { time.Sleep(p) })
-}
-
-func NewTimePhaserFunc(sleepPeriod func(Phase)) *TimePhaser {
-	return &TimePhaser{
-		out:   make(chan Phase, 4),
-		sleep: sleepPeriod,
-	}
-}
-
-func (t *TimePhaser) Start() {
-	t.out <- DealPhase
-	t.sleep(DealPhase)
-	t.out <- ResponsePhase
-	t.sleep(ResponsePhase)
-	t.out <- JustifPhase
-	t.sleep(JustifPhase)
-	t.out <- FinishPhase
-}
-
-func (t *TimePhaser) NextPhase() chan Phase {
-	return t.out
 }
 
 // Protocol contains the logic to run a DKG protocol over a generic broadcast
