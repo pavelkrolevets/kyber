@@ -109,6 +109,12 @@ type Config struct {
 	// Auth is the scheme to use to authentify the packets sent and received
 	// during the protocol.
 	Auth sign.Scheme
+
+	// BasePoint is used to set a custom base point when committing to the
+	// polynomials; the resulting effect is that the public key is now the
+	// secretkey * BasePoint instead of being the default generator of the
+	// group. If nil, the default generator of the group is used.
+	BasePoint kyber.Point
 }
 
 // Phase is a type that represents the different stages of the DKG protocol.
@@ -181,6 +187,7 @@ type DistKeyGenerator struct {
 	processed bool
 	// public polynomial of the old group
 	olddpub *share.PubPoly
+	base    kyber.Point
 }
 
 // NewDistKeyHandler takes a Config and returns a DistKeyGenerator that is able
@@ -269,6 +276,10 @@ func NewDistKeyHandler(c *Config) (*DistKeyGenerator, error) {
 		canIssue = true
 	}
 	dpriv = share.NewPriPoly(c.Suite, c.Threshold, secretCoeff, c.Suite.RandomStream())
+	basePoint := c.BasePoint
+	if basePoint == nil {
+		basePoint = c.Suite.Point().Base()
+	}
 	dpub = dpriv.Commit(c.Suite.Point().Base())
 	// resharing case and we are included in the new list of nodes
 	if isResharing && newPresent {
@@ -325,6 +336,7 @@ func NewDistKeyHandler(c *Config) (*DistKeyGenerator, error) {
 		statuses:    statuses,
 		validShares: make(map[uint32]kyber.Scalar),
 		allPublics:  make(map[uint32]*share.PubPoly),
+		base:        basePoint,
 	}
 	return dkg, err
 }
@@ -876,7 +888,7 @@ func (d *DistKeyGenerator) computeResharingResult() (*Result, error) {
 	}
 
 	// Reconstruct the final public polynomial
-	pubPoly := share.NewPubPoly(d.suite, nil, finalCoeffs)
+	pubPoly := share.NewPubPoly(d.suite, d.base, finalCoeffs)
 
 	if !pubPoly.Check(privateShare) {
 		return nil, errors.New("dkg: share do not correspond to public polynomial ><")
@@ -916,8 +928,9 @@ func (d *DistKeyGenerator) computeResharingResult() (*Result, error) {
 	return &Result{
 		QUAL: qual,
 		Key: &DistKeyShare{
-			Commits: finalCoeffs,
-			Share:   privateShare,
+			Commits:   finalCoeffs,
+			Share:     privateShare,
+			BasePoint: d.base,
 		},
 	}, nil
 }
@@ -972,6 +985,7 @@ func (d *DistKeyGenerator) computeDKGResult() (*Result, error) {
 				I: int(d.nidx),
 				V: finalShare,
 			},
+			BasePoint: d.base,
 		},
 	}, nil
 }

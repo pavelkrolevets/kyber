@@ -66,7 +66,8 @@ type DistKeyShare struct {
 	// Coefficients of the public polynomial holding the public key.
 	Commits []kyber.Point
 	// Share of the distributed secret which is private information.
-	Share *share.PriShare
+	Share     *share.PriShare
+	BasePoint kyber.Point
 }
 
 // Public returns the public key associated with the distributed private key.

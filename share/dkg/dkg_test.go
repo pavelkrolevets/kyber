@@ -117,8 +117,9 @@ func testResults(t *testing.T, suite Suite, thr, n int, results []*Result) {
 	for _, res := range results {
 		shares = append(shares, res.Key.PriShare())
 	}
+	basePoint := results[0].Key.BasePoint
 	// test if shares are public polynomial evaluation
-	exp := share.NewPubPoly(suite, suite.Point().Base(), results[0].Key.Commitments())
+	exp := share.NewPubPoly(suite, basePoint, results[0].Key.Commitments())
 	for _, share := range shares {
 		pubShare := exp.Eval(share.I)
 		expShare := suite.Point().Mul(share.V, nil)
@@ -135,7 +136,6 @@ func testResults(t *testing.T, suite Suite, thr, n int, results []*Result) {
 	public := suite.Point().Mul(secret, nil)
 	expKey := results[0].Key.Public()
 	require.True(t, public.Equal(expKey))
-
 }
 
 type MapDeal func([]*DealBundle) []*DealBundle
@@ -205,11 +205,13 @@ func TestDKGFull(t *testing.T) {
 	suite := edwards25519.NewBlakeSHA256Ed25519()
 	tns := GenerateTestNodes(suite, n)
 	list := NodesFromTest(tns)
+	base := suite.Point().Pick(random.New())
 	conf := Config{
 		Suite:     suite,
 		NewNodes:  list,
 		Threshold: thr,
 		Auth:      schnorr.NewScheme(suite),
+		BasePoint: base,
 	}
 
 	results := RunDKG(t, tns, conf, nil, nil, nil)
