@@ -1,7 +1,9 @@
 package timelock
 
 import (
+	"crypto/rand"
 	"errors"
+	"fmt"
 
 	"golang.org/x/crypto/blake2s"
 
@@ -12,78 +14,164 @@ import (
 )
 
 type Ciphertext struct {
-	//
-	RP kyber.Point
-	// ciphertext
-	C []byte
+	// Random point rP
+	U kyber.Point
+	// Sigma attached to ID: sigma XOR H(rG_id)
+	V []byte
+	// ciphertext of the message M XOR H(sigma)
+	W []byte
 }
 
-// SigGroup = G2
-// KeyGroup = G1
-// P random generator of G1
-// dist key: s, Ppub = s*P \in G1
-// H1: {0,1}^n -> G1
-// H2: GT -> {0,1}^n
-// ID: Qid = H1(ID) = xP \in G2
-// 	secret did = s*Qid \in G2
-// Encrypt:
-// - random r scalar
-// - Gid = e(Ppub, r*Qid) = e(P, P)^(x*s*r) \in GT
-// 		 = GidT
-// - U = rP \in G1,
-// - V = M XOR H2(Gid)) = M XOR H2(GidT)  \in {0,1}^n
-// Decrypt:
-// - V XOR H2(e(U, did)) = V XOR H2(e(rP, s*Qid))
-//   = V XOR H2(e(P, P)^(r*s*x))
-//   = V XOR H2(GidT) = M
-func Encrypt(s pairing.Suite, basePoint, public kyber.Point, ID, msg []byte) (*Ciphertext, error) {
+// H2Tag is the domain separation tag for the H2 hash function
+func H2Tag() []byte {
+	return []byte("IBE-H2")
+}
+
+// H3Tag is the domain separation tag for the H3 hash function
+func H3Tag() []byte {
+	return []byte("IBE-H3")
+}
+
+// H4Tag is the domain separation tag for the H4 hash function
+func H4Tag() []byte {
+	return []byte("IBE-H4")
+}
+
+// Encrypt implements  the cca identity based encryption scheme from
+// https://crypto.stanford.edu/~dabo/pubs/papers/bfibe.pdf for more information
+// about the scheme.
+// - master is the master key on G1
+// - ID is the ID towards which we encrypt the message
+// - msg is the actual message
+// - seed is the random seed to generate the random element (sigma) of the encryption
+// The suite must produce points which implements the `HashablePoint` interface.
+func Encrypt(s pairing.Suite, master kyber.Point, ID, msg []byte) (*Ciphertext, error) {
 	if len(msg)>>16 > 0 {
 		// we're using blake2 as XOF which only outputs 2^16-1 length
-		return nil, errors.New("ciphertext too long")
+		return nil, errors.New("plaintext too long")
 	}
-	hashable, ok := s.G2().Point().(kyber.HashablePoint)
+	// 1. Compute Gid = e(master,Q_id)
+	hG2, ok := s.G2().Point().(kyber.HashablePoint)
 	if !ok {
 		return nil, errors.New("point needs to implement hashablePoint")
 	}
-	Qid := hashable.Hash(ID)
-	r := s.G2().Scalar().Pick(random.New())
-	rP := s.G1().Point().Mul(r, basePoint)
+	Qid := hG2.Hash(ID)
+	Gid := s.Pair(master, Qid)
 
-	// e(Qid, Ppub) = e( H(round), s*P) where s is dist secret key
-	Ppub := public
-	rQid := key.SigGroup.Point().Mul(r, Qid)
-	GidT := key.Pairing.Pair(Ppub, rQid)
-	// H(gid)
-	hGidT, err := gtToHash(GidT, uint16(len(msg)))
+	// 2. Derive random sigma
+	sigma := make([]byte, len(msg))
+	if _, err := rand.Read(sigma); err != nil {
+		return nil, fmt.Errorf("err reading rand sigma: %v", err)
+	}
+	// 3. Derive r from sigma and msg
+	r, err := h3(s, sigma, msg)
 	if err != nil {
 		return nil, err
 	}
-	xored := xor(msg, hGidT)
+	// 4. Compute U = rP
+	U := s.G1().Point().Mul(r, s.G1().Point().Base())
+
+	// 5. Compute V = sigma XOR H2(rGid)
+	rGid := Gid.Mul(r, Gid) // even in Gt, it's additive notation
+	hrGid, err := gtToHash(rGid, len(msg), H2Tag())
+	if err != nil {
+		return nil, err
+	}
+	V := xor(sigma, hrGid)
+
+	// 6. Compute M XOR H(sigma)
+	hsigma, err := h4(sigma, len(msg))
+	if err != nil {
+		return nil, err
+	}
+	W := xor(msg, hsigma)
 
 	return &Ciphertext{
-		RP: rP,
-		C:  xored,
+		U: U,
+		V: V,
+		W: W,
 	}, nil
 }
 
-func Decrypt(s pairing.Suite, private kyber.Point, c *Ciphertext) ([]byte, error) {
-	gidt := key.Pairing.Pair(c.RP, private)
-	hgidt, err := gtToHash(gidt, uint16(len(c.C)))
+func Decrypt(s pairing.Suite, master, private kyber.Point, c *Ciphertext) ([]byte, error) {
+	// 1. Compute sigma = V XOR H2(e(rP,private))
+	gidt := key.Pairing.Pair(c.U, private)
+	hgidt, err := gtToHash(gidt, len(c.W), H2Tag())
 	if err != nil {
 		return nil, err
 	}
-	return xor(c.C, hgidt), nil
-}
+	if len(hgidt) != len(c.V) {
+		return nil, fmt.Errorf("XorSigma is of invalid length: exp %d vs got %d", len(hgidt), len(c.V))
+	}
+	sigma := xor(hgidt, c.V)
 
-func gtToHash(gt kyber.Point, length uint16) ([]byte, error) {
-	xof, err := blake2s.NewXOF(length, nil)
+	// 2. Compute M = W XOR H4(sigma)
+	// TODO: what if the length is wrong - it should fail with blake2s i believe
+	// but maybe simpler/better to put the length in the ciphertext
+	hsigma, err := h4(sigma, len(c.W))
 	if err != nil {
 		return nil, err
+	}
+
+	msg := xor(hsigma, c.W)
+
+	// 3. Check U = rP
+	r, err := h3(s, sigma, msg)
+	if err != nil {
+		return nil, err
+	}
+	rP := s.G1().Point().Mul(r, s.G1().Point().Base())
+	if !rP.Equal(c.U) {
+		return nil, fmt.Errorf("invalid proof")
+	}
+	return msg, nil
+}
+
+// hash sigma and msg to get r
+func h3(s pairing.Suite, sigma, msg []byte) (kyber.Scalar, error) {
+	h3, err := blake2s.NewXOF(uint16(s.G1().ScalarLen()), nil)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := h3.Write(H3Tag()); err != nil {
+		return nil, fmt.Errorf("err hashing h3 tag: %v", err)
+	}
+	if _, err := h3.Write(sigma); err != nil {
+		return nil, fmt.Errorf("err hashing sigma to XOF: %v", err)
+	}
+	_, _ = h3.Write(msg)
+	return s.G1().Scalar().Pick(random.New(h3)), nil
+}
+
+func h4(sigma []byte, length int) ([]byte, error) {
+	h4, err := blake2s.NewXOF(uint16(length), nil)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := h4.Write(H4Tag()); err != nil {
+		return nil, fmt.Errorf("err writing h4tag: %v", err)
+	}
+	if _, err := h4.Write(sigma); err != nil {
+		return nil, fmt.Errorf("err writing sigma to h4: %v", err)
+	}
+	h4sigma := make([]byte, length)
+	if _, err := h4.Read(h4sigma); err != nil {
+		return nil, fmt.Errorf("err reading from h4: %v", err)
+	}
+	return h4sigma, nil
+}
+
+func gtToHash(gt kyber.Point, length int, dst []byte) ([]byte, error) {
+	xof, err := blake2s.NewXOF(uint16(length), nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := xof.Write(dst); err != nil {
+		return nil, errors.New("err writing dst to gtHash")
 	}
 	gt.MarshalTo(xof)
 	var b = make([]byte, length)
-	n, err := xof.Read(b)
-	if uint16(n) != length || err != nil {
+	if _, err := xof.Read(b); err != nil {
 		return nil, errors.New("couldn't read from xof")
 	}
 	return b[:], nil
