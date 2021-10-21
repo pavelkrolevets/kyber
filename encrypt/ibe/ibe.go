@@ -1,4 +1,4 @@
-package timelock
+package ibe
 
 import (
 	"crypto/rand"
@@ -7,7 +7,6 @@ import (
 
 	"golang.org/x/crypto/blake2s"
 
-	"github.com/drand/drand/key"
 	"github.com/drand/kyber"
 	"github.com/drand/kyber/pairing"
 	"github.com/drand/kyber/util/random"
@@ -95,7 +94,11 @@ func Encrypt(s pairing.Suite, master kyber.Point, ID, msg []byte) (*Ciphertext, 
 
 func Decrypt(s pairing.Suite, master, private kyber.Point, c *Ciphertext) ([]byte, error) {
 	// 1. Compute sigma = V XOR H2(e(rP,private))
-	gidt := key.Pairing.Pair(c.U, private)
+	gidt := s.Pair(c.U, private)
+	return subdecrypt(s, master, c, gidt)
+}
+
+func subdecrypt(s pairing.Suite, msater kyber.Point, c *Ciphertext, gidt kyber.Point) ([]byte, error) {
 	hgidt, err := gtToHash(gidt, len(c.W), H2Tag())
 	if err != nil {
 		return nil, err
@@ -122,14 +125,18 @@ func Decrypt(s pairing.Suite, master, private kyber.Point, c *Ciphertext) ([]byt
 	}
 	rP := s.G1().Point().Mul(r, s.G1().Point().Base())
 	if !rP.Equal(c.U) {
-		return nil, fmt.Errorf("invalid proof")
+		return nil, fmt.Errorf("invalid proof: rP check failed")
 	}
 	return msg, nil
+
 }
+
+const maxSize = 1 << 10
 
 // hash sigma and msg to get r
 func h3(s pairing.Suite, sigma, msg []byte) (kyber.Scalar, error) {
-	h3, err := blake2s.NewXOF(uint16(s.G1().ScalarLen()), nil)
+	//h3, err := blake2s.NewXOF(uint16(s.G1().ScalarLen()), nil)
+	h3, err := blake2s.NewXOF(maxSize, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -144,7 +151,7 @@ func h3(s pairing.Suite, sigma, msg []byte) (kyber.Scalar, error) {
 }
 
 func h4(sigma []byte, length int) ([]byte, error) {
-	h4, err := blake2s.NewXOF(uint16(length), nil)
+	h4, err := blake2s.NewXOF(maxSize, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -162,7 +169,7 @@ func h4(sigma []byte, length int) ([]byte, error) {
 }
 
 func gtToHash(gt kyber.Point, length int, dst []byte) ([]byte, error) {
-	xof, err := blake2s.NewXOF(uint16(length), nil)
+	xof, err := blake2s.NewXOF(maxSize, nil)
 	if err != nil {
 		return nil, err
 	}
