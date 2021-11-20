@@ -154,7 +154,7 @@ func (d *DealBundle) Hash() []byte {
 	original := make([]Deal, len(d.Deals))
 	copy(original, d.Deals)
 	// first order the deals in a  stable order
-	sort.SliceStable(d.Deals[:], func(i, j int) bool {
+	sort.Slice(d.Deals[:], func(i, j int) bool {
 		return d.Deals[i].ShareIndex < d.Deals[j].ShareIndex
 	})
 
