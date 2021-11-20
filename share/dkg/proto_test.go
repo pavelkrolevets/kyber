@@ -51,7 +51,7 @@ func (n *TestNetwork) isNoop(i uint32) bool {
 func (n *TestNetwork) BroadcastDeal(a *DealBundle) {
 	for _, board := range n.boards {
 		if !n.isNoop(board.index) {
-			board.newDeals <- (*a)
+			board.ReceiveDeal(*a)
 		}
 	}
 }
@@ -73,22 +73,24 @@ func (n *TestNetwork) BroadcastJustification(a *JustificationBundle) {
 }
 
 type TestBoard struct {
-	index    uint32
-	newDeals chan DealBundle
-	newResps chan ResponseBundle
-	newJusts chan JustificationBundle
-	network  *TestNetwork
-	badDeal  bool
-	badSig   bool
+	index        uint32
+	newDeals     chan DealBundle
+	newResps     chan ResponseBundle
+	newJusts     chan JustificationBundle
+	network      *TestNetwork
+	badDeal      bool
+	badSig       bool
+	howManyDeals int
 }
 
 func NewTestBoard(index uint32, n int, network *TestNetwork) *TestBoard {
 	return &TestBoard{
-		network:  network,
-		index:    index,
-		newDeals: make(chan DealBundle, n),
-		newResps: make(chan ResponseBundle, n),
-		newJusts: make(chan JustificationBundle, n),
+		network:      network,
+		index:        index,
+		newDeals:     make(chan DealBundle, n),
+		newResps:     make(chan ResponseBundle, n),
+		newJusts:     make(chan JustificationBundle, n),
+		howManyDeals: 1,
 	}
 }
 
@@ -99,15 +101,24 @@ func (t *TestBoard) PushDeals(d *DealBundle) {
 	if t.badSig {
 		d.Signature = []byte("bad signature my friend")
 	}
+	fmt.Printf("Node %d broadcasts its DEALS\n", t.index)
 	t.network.BroadcastDeal(d)
 }
 
 func (t *TestBoard) PushResponses(r *ResponseBundle) {
+	fmt.Printf("Node %d broadcasts its RESPONSES\n", t.index)
 	t.network.BroadcastResponse(r)
 }
 
 func (t *TestBoard) PushJustifications(j *JustificationBundle) {
+	fmt.Printf("Node %d broadcasts its JUSTIFICATIONS\n", t.index)
 	t.network.BroadcastJustification(j)
+}
+
+func (t *TestBoard) ReceiveDeal(d DealBundle) {
+	fmt.Printf("Node %d: Receive the %d DEAL\n", t.index, t.howManyDeals)
+	t.newDeals <- d
+	t.howManyDeals++
 }
 
 func (t *TestBoard) IncomingDeal() <-chan DealBundle {
@@ -365,8 +376,8 @@ func TestProtoThreshold(t *testing.T) {
 }
 
 func TestProtoFullFast(t *testing.T) {
-	n := 5
-	thr := n
+	n := 64
+	thr := 50
 	period := 1 * time.Second
 	suite := edwards25519.NewBlakeSHA256Ed25519()
 	tns := GenerateTestNodes(suite, n)
@@ -385,7 +396,10 @@ func TestProtoFullFast(t *testing.T) {
 	var resCh = make(chan OptionResult, 1)
 	// start all nodes and wait until each end
 	for _, node := range tns {
-		go func(n *TestNode) { resCh <- <-n.proto.WaitEnd() }(node)
+		go func(n *TestNode) {
+			fmt.Printf("Node %d starts\n", n.Index)
+			resCh <- <-n.proto.WaitEnd()
+		}(node)
 	}
 	// start the phasers
 	for _, node := range tns {

@@ -213,8 +213,11 @@ func (p *Protocol) startFast() {
 		case newDeal := <-p.board.IncomingDeal():
 			if err := p.verify(&newDeal); err == nil {
 				deals.Push(&newDeal)
+			} else {
+				fmt.Printf("Protocol error on deal: %s\n", err)
 			}
 			if deals.Len() == oldN {
+				fmt.Printf("Protocol move to resp phase\n")
 				if !toResp() {
 					return
 				}
@@ -333,11 +336,13 @@ func (s *set) Push(p Packet) {
 	idx := p.Index()
 	if s.isBad(idx) {
 		// already misbehaved before
+		fmt.Println("ALREADY MISBEHAVED!")
 		return
 	}
 	prev, present := s.vals[idx]
 	if present {
 		if !bytes.Equal(prev.Hash(), hash) {
+			fmt.Println("NEW MISBEHAVED!")
 			// bad behavior - we evict
 			delete(s.vals, idx)
 			s.bad = append(s.bad, idx)

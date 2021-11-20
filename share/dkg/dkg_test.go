@@ -199,6 +199,11 @@ func RunDKG(t *testing.T, tns []*TestNode, conf Config,
 	return results
 }
 
+type loggingPhaser struct {
+	Phaser
+	Index int
+}
+
 func TestDKGFull(t *testing.T) {
 	n := 5
 	thr := n
@@ -553,8 +558,8 @@ func TestDKGResharingFast(t *testing.T) {
 }
 
 func TestDKGFullFast(t *testing.T) {
-	n := 5
-	thr := n
+	n := 64
+	thr := 50
 	suite := edwards25519.NewBlakeSHA256Ed25519()
 	tns := GenerateTestNodes(suite, n)
 	list := NodesFromTest(tns)

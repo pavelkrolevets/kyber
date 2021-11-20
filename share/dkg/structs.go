@@ -1,6 +1,7 @@
 package dkg
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -110,12 +111,69 @@ type DealBundle struct {
 	Signature []byte
 }
 
+func printDeals(d []Deal) string {
+	var b bytes.Buffer
+	for i, dd := range d {
+		b.WriteString(fmt.Sprintf("-[%d] Share: %d -> %x\t", i, dd.ShareIndex, dd.EncryptedShare[:3]))
+		if i+1%3 == 0 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func printDiff(d1, d2 []Deal) string {
+	if len(d1) != len(d2) {
+		return "Not same length!"
+	}
+	for i := 0; i < len(d1); i++ {
+		if d1[i].ShareIndex != d2[i].ShareIndex {
+			return fmt.Sprintf("d1[%d].ShareIndex = %d != d2[%d].ShareIndex = %d", i, d1[i].ShareIndex, i, d2[i].ShareIndex)
+		}
+		if !bytes.Equal(d1[i].EncryptedShare, d2[i].EncryptedShare) {
+			return fmt.Sprintf("d1[%d].Encrypted != d2[%d].Encrypted", i, i)
+		}
+	}
+	return "no difference"
+}
+
+func (d *DealBundle) String() string {
+	var b bytes.Buffer
+	b.WriteString("Deal Bundle:\n")
+	b.WriteString(fmt.Sprintf("\t-Dealer Index: %d\n", d.DealerIndex))
+	b.WriteString(fmt.Sprintf("\t-SessionID: %x\n", d.SessionID))
+	b.WriteString(fmt.Sprintf("\t-Public Poly: %v\n", d.Public))
+	b.WriteString("\t-Deals:\n")
+	b.WriteString(printDeals(d.Deals))
+	b.WriteString("\n")
+	return b.String()
+}
+
 // Hash hashes the index, public coefficients and deals
 func (d *DealBundle) Hash() []byte {
+	original := make([]Deal, len(d.Deals))
+	copy(original, d.Deals)
 	// first order the deals in a  stable order
-	sort.Slice(d.Deals, func(i, j int) bool {
+	sort.SliceStable(d.Deals[:], func(i, j int) bool {
 		return d.Deals[i].ShareIndex < d.Deals[j].ShareIndex
 	})
+
+	/// Checking each index is +1 from precedent
+	for i := 0; i < len(d.Deals)-1; i++ {
+		if uint32(i) == d.DealerIndex {
+			continue
+		}
+		var offset uint32 = 1
+		if uint32(i+1) == d.DealerIndex {
+			offset += 1
+		}
+		if d.Deals[i].ShareIndex+offset != d.Deals[i+1].ShareIndex {
+			fmt.Printf("--index %d = %d , index %d = %d (offset %d)--> \n%s\n", i, d.Deals[i].ShareIndex, i+1, d.Deals[i+1].ShareIndex, offset, d)
+			fmt.Printf("\n ----------------- \nORIGINAL:\n%s\n", printDeals(original))
+			fmt.Printf("\n ------------------- \n DIFFERENCE: %s\n", printDiff(d.Deals, original))
+			panic("ordering is not complete")
+		}
+	}
 	h := sha256.New()
 	binary.Write(h, binary.BigEndian, d.DealerIndex)
 	for _, c := range d.Public {
@@ -163,7 +221,7 @@ type ResponseBundle struct {
 // Hash hashes the share index and responses
 func (r *ResponseBundle) Hash() []byte {
 	// first order the response slice in a canonical order
-	sort.Slice(r.Responses, func(i, j int) bool {
+	sort.SliceStable(r.Responses, func(i, j int) bool {
 		return r.Responses[i].DealerIndex < r.Responses[j].DealerIndex
 	})
 	h := sha256.New()
@@ -293,5 +351,8 @@ func VerifyPacketSignature(c *Config, p Packet) error {
 	}
 
 	err := c.Auth.Verify(pub, hash, sig)
+	if err != nil {
+		fmt.Printf("failed verification for %T: hash %x pubkey %x sig %x -> %s\n", p, hash, pub.String(), sig, p)
+	}
 	return err
 }

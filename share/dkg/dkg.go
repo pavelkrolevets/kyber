@@ -1039,5 +1039,16 @@ func GetNonce() []byte {
 func (d *DistKeyGenerator) sign(p Packet) ([]byte, error) {
 	msg := p.Hash()
 	priv := d.c.Longterm
-	return d.c.Auth.Sign(priv, msg)
+
+	pub := d.c.Suite.Point().Mul(d.c.Longterm, nil)
+	sig, err := d.c.Auth.Sign(priv, msg)
+	if err != nil {
+		panic(err)
+	}
+	err = d.c.Auth.Verify(pub, p.Hash(), sig)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("sig generation for %T : hash %x pubkey %x sig %x --> %s\n", p, msg, pub.String(), sig, p)
+	return sig, nil
 }
