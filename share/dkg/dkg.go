@@ -114,7 +114,7 @@ type Config struct {
 	// errors).  from participants. Errors don't mean the protocol should be
 	// stopped, so logging is the best way to communicate information to the
 	// application layer. It can be nil.
-	Logger Logger
+	Log Logger
 }
 
 // Phase is a type that represents the different stages of the DKG protocol.
@@ -1080,14 +1080,14 @@ func (d *DistKeyGenerator) Error(keyvals ...interface{}) {
 }
 
 func (c *Config) Info(keyvals ...interface{}) {
-	if c.Logger != nil {
-		c.Logger.Info(append([]interface{}{"dkg-log"}, keyvals...))
+	if c.Log != nil {
+		c.Log.Info(append([]interface{}{"dkg-log"}, keyvals...))
 	}
 }
 
 func (c *Config) Error(keyvals ...interface{}) {
-	if c.Logger != nil {
-		c.Logger.Error(append([]interface{}{"dkg-log"}, keyvals...))
+	if c.Log != nil {
+		c.Log.Error(append([]interface{}{"dkg-log"}, keyvals...))
 	}
 }
 
