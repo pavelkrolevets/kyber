@@ -24,15 +24,42 @@ func newSetting() (pairing.Suite, kyber.Point, []byte, kyber.Point) {
 	return suite, Ppub, ID, sQid
 }
 
-func TestTimelock(t *testing.T) {
+func TestValidTimelockEncryptionDecryptsCorrectly(t *testing.T) {
 	suite, Ppub, ID, sQid := newSetting()
 	msg := []byte("Hello World\n")
 
 	c, err := Encrypt(suite, Ppub, ID, msg)
 	require.NoError(t, err)
-	msg2, err := Decrypt(suite, Ppub, sQid, c)
+	msg2, err := Decrypt(suite, sQid, c)
 	require.NoError(t, err)
 	require.Equal(t, msg, msg2)
+}
+
+func TestInvalidSigmaFailsDecryption(t *testing.T) {
+	suite, Ppub, ID, sQid := newSetting()
+	msg := []byte("Hello World\n")
+
+	c, err := Encrypt(suite, Ppub, ID, msg)
+	require.NoError(t, err)
+
+	c.V = []byte("somenonsense")
+
+	_, err = Decrypt(suite, sQid, c)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid proof")
+}
+
+func TestInvalidMessageFailsDecryption(t *testing.T) {
+	suite, Ppub, ID, sQid := newSetting()
+	msg := []byte("Hello World\n")
+
+	c, err := Encrypt(suite, Ppub, ID, msg)
+	require.NoError(t, err)
+
+	c.W = []byte("somenonsense")
+	_, err = Decrypt(suite, sQid, c)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid proof")
 }
 
 func TestVeryLongInputFailsEncryption(t *testing.T) {
@@ -49,7 +76,7 @@ func TestVeryLongCipherFailsDecryptionBecauseOfLength(t *testing.T) {
 	require.NoError(t, err)
 
 	c.W = []byte(strings.Repeat("And you have to understand this, that a prince, especially a new one, cannot observe all those things for which men are esteemed", 1000))
-	_, err = Decrypt(suite, Ppub, sQid, c)
+	_, err = Decrypt(suite, sQid, c)
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "XorSigma is of invalid length")

@@ -92,13 +92,9 @@ func Encrypt(s pairing.Suite, master kyber.Point, ID, msg []byte) (*Ciphertext, 
 	}, nil
 }
 
-func Decrypt(s pairing.Suite, master, private kyber.Point, c *Ciphertext) ([]byte, error) {
+func Decrypt(s pairing.Suite, private kyber.Point, c *Ciphertext) ([]byte, error) {
 	// 1. Compute sigma = V XOR H2(e(rP,private))
 	gidt := s.Pair(c.U, private)
-	return subdecrypt(s, c, gidt)
-}
-
-func subdecrypt(s pairing.Suite, c *Ciphertext, gidt kyber.Point) ([]byte, error) {
 	hgidt, err := gtToHash(gidt, len(c.W), H2Tag())
 	if err != nil {
 		return nil, err
@@ -109,7 +105,6 @@ func subdecrypt(s pairing.Suite, c *Ciphertext, gidt kyber.Point) ([]byte, error
 	sigma := xor(hgidt, c.V)
 
 	// 2. Compute M = W XOR H4(sigma)
-	// but maybe simpler/better to put the length in the ciphertext
 	hsigma, err := h4(sigma, len(c.W))
 	if err != nil {
 		return nil, err
