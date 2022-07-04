@@ -109,7 +109,6 @@ func subdecrypt(s pairing.Suite, c *Ciphertext, gidt kyber.Point) ([]byte, error
 	sigma := xor(hgidt, c.V)
 
 	// 2. Compute M = W XOR H4(sigma)
-	// TODO: what if the length is wrong - it should fail with blake2s i believe
 	// but maybe simpler/better to put the length in the ciphertext
 	hsigma, err := h4(sigma, len(c.W))
 	if err != nil {
