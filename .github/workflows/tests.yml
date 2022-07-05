@@ -11,9 +11,6 @@ concurrency:
   group: ci-${{ github.ref }}-lint
   cancel-in-progress: true
 
-env:
-  GO111MODULE: "ON"
-
 jobs:
   build:
     runs-on: ubuntu-latest
