@@ -128,21 +128,16 @@ func Decrypt(s pairing.Suite, private kyber.Point, c *Ciphertext) ([]byte, error
 
 // hash sigma and msg to get r
 func h3(s pairing.Suite, sigma, msg []byte) (kyber.Scalar, error) {
-	h3 := s.Hash()
-
-	if _, err := h3.Write(H3Tag()); err != nil {
-		return nil, fmt.Errorf("err hashing h3 tag: %v", err)
-	}
-	if _, err := h3.Write(sigma); err != nil {
-		return nil, fmt.Errorf("err hashing sigma: %v", err)
-	}
-	_, _ = h3.Write(msg)
 	hashable, ok := s.G1().Scalar().(kyber.HashableScalar)
 	if !ok {
 		panic("scalar can't be created from hash")
 	}
 
-	h3Reader := bytes.NewReader(h3.Sum(nil))
+	input := H3Tag()
+	input = append(input, sigma...)
+	input = append(input, msg...)
+
+	h3Reader := bytes.NewReader(input)
 
 	return hashable.Hash(s, h3Reader)
 }
