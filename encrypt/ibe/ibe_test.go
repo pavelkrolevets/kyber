@@ -1,6 +1,7 @@
 package ibe
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -93,4 +94,18 @@ func TestInvalidWFailsDecryptionBecauseOfLength(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "XorSigma is of invalid length")
+}
+
+func TestGTToHash(t *testing.T) {
+
+	suite, _, _, _ := newSetting()
+
+	G1 := suite.G1().Point().Base()
+	G2 := suite.G2().Point().Base()
+
+	ret := suite.Pair(G1, G2)
+
+	hrGid, err := gtToHash(suite, ret, 16, H2Tag())
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%x", hrGid), "cb87319f24560b5231579a09ad79f12e")
 }
