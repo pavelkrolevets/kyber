@@ -749,7 +749,7 @@ func (d *DistKeyGenerator) ProcessJustifications(bundles []*JustificationBundle)
 		}
 		if d.canIssue && bundle.DealerIndex == uint32(d.oidx) {
 			// we dont treat our own justifications
-			d.c.Error("Skipping own justification", true)
+			d.c.Info("Skipping own justification", true)
 			continue
 		}
 		if !isIndexIncluded(d.c.OldNodes, bundle.DealerIndex) {
