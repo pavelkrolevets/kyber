@@ -6,10 +6,13 @@ import (
 	"time"
 
 	"github.com/drand/kyber"
+	bls3 "github.com/drand/kyber-bls12381"
 	"github.com/drand/kyber/group/edwards25519"
+	drand_bls "github.com/drand/kyber/sign/bls"
 	"github.com/drand/kyber/sign/schnorr"
 	"github.com/drand/kyber/util/random"
 	clock "github.com/jonboulle/clockwork"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -197,18 +200,19 @@ func TestProtoFull(t *testing.T) {
 }
 
 func TestProtoResharing(t *testing.T) {
-	n := 5
-	thr := 4
+	n := 4
+	thr := 3
 	period := 1 * time.Second
-	suite := edwards25519.NewBlakeSHA256Ed25519()
-	tns := GenerateTestNodes(suite, n)
+	suite := bls3.NewBLS12381Suite()
+	tns := GenerateTestNodes(suite.G1().(Suite), n)
 	list := NodesFromTest(tns)
 	network := NewTestNetwork(n)
 	dkgConf := Config{
-		Suite:     suite,
+		Suite:     suite.G1().(Suite),
 		NewNodes:  list,
 		Threshold: thr,
-		Auth:      schnorr.NewScheme(suite),
+		Auth:      drand_bls.NewSchemeOnG2(suite),
+		Log:       logrus.NewEntry(logrus.New()),
 	}
 	SetupNodes(tns, &dkgConf)
 	SetupProto(tns, &dkgConf, period, network)
@@ -248,31 +252,76 @@ func TestProtoResharing(t *testing.T) {
 			break
 		}
 	}
-	testResults(t, suite, thr, n, results)
-
+	testResults(t, suite.G1().(Suite), thr, n, results)
 	fmt.Printf("\n\n ----- RESHARING ----\n\n")
+
 	// RESHARING
 	// we setup now the second group with one node left from old group and two
 	// new node
 	newN := n + 1
 	newT := thr + 1
 	var newTns = make([]*TestNode, newN)
-	copy(newTns, tns[:n-1])
+	// offline := 1
+	// copy(newTns, tns[:n])
+	// + offline because we fill the gap of the offline nodes by new nodes
+	// newNode := newN - n + offline
+	newNode := newN - n
 	//  new node can have the same index as a previous one, separation is made
-	newTns[n-1] = NewTestNode(suite, n-1)
-	newTns[n] = NewTestNode(suite, n)
+	// newTns[n-1] = NewTestNode(suite, n-1)
+	// newTns[n] = NewTestNode(suite, n)
+	for i := 0; i < newNode; i++ {
+		//  new node can have the same index as a previous one, separation is made
+		// newTns[n-offline+i] = NewTestNode(suite, n-offline+i)
+		newTns[n+i] = NewTestNode(suite.G1().(Suite), n+i)
+	}
+	for i, n := range tns[:n] {
+		t.Logf("Old Nodes %v", n.dkg.long)
+		newTns[i] = NewTestNode(suite.G1().(Suite), i)
+		// newTns[i].Private.Set(n.Private)
+		// newTns[i].Public.Set(n.Public)
+		newTns[i].Private = n.Private
+		newTns[i].Public = n.Public
+		// newTns[i].Index = n.Index
+		newTns[i].res = n.res
+		// newTns[i].res = n.res
+		// newTns[i].proto = n.proto
+		// newTns[i].board = n.board
+	}
 	network = NewTestNetwork(newN)
 	newList := NodesFromTest(newTns)
-	newConf := &Config{
-		Suite:        suite,
-		NewNodes:     newList,
-		OldNodes:     list,
-		Threshold:    newT,
-		OldThreshold: thr,
-		Auth:         schnorr.NewScheme(suite),
+	oldList := NodesFromTest(newTns[:n])
+	for _, n := range list {
+		t.Logf("Old Node %d, %s", n.Index, n.Public.String())
+	}
+	for _, n := range newList {
+		t.Logf("New Node %d, %s", n.Index, n.Public.String())
 	}
 
-	SetupReshareNodes(newTns, newConf, tns[0].res.Key.Commits)
+	newConf := &Config{
+		Suite:        suite.G1().(Suite),
+		NewNodes:     newList,
+		OldNodes:     oldList,
+		Threshold:    newT,
+		OldThreshold: thr,
+		Auth:         drand_bls.NewSchemeOnG2(suite),
+		Log:          logrus.NewEntry(logrus.New()),
+	}
+	var commits []byte
+	for _, point := range tns[0].res.Key.Commitments() {
+		b, _ := point.MarshalBinary()
+		commits = append(commits, b...)
+	}
+
+	var coefs []kyber.Point
+	coefsBytes := splitBytes(commits, 48)
+	for _, c := range coefsBytes {
+		p := suite.G1().Point()
+		err := p.UnmarshalBinary(c)
+		require.NoError(t, err)
+		coefs = append(coefs, p)
+	}
+
+	SetupReshareNodes(newTns, newConf, coefs)
 	SetupProto(newTns, newConf, period, network)
 
 	resCh = make(chan OptionResult, 1)
@@ -309,8 +358,8 @@ func TestProtoResharing(t *testing.T) {
 			break
 		}
 	}
-	testResults(t, suite, newT, newN, results)
-
+	testResults(t, suite.G1().(Suite), newT, newN, results)
+	fmt.Printf("Result pub key %s \n", results[0].Key.Public().String())
 }
 
 func TestProtoThreshold(t *testing.T) {
@@ -688,4 +737,17 @@ func TestProtoSkip(t *testing.T) {
 	for _, tn := range tns {
 		require.True(t, tn.proto.dkg.statuses.CompleteSuccess(), "%d: %p-> %s", tn.Index, tn.proto.dkg, tn.proto.dkg.statuses.String())
 	}
+}
+
+func splitBytes(buf []byte, lim int) [][]byte {
+	var chunk []byte
+	chunks := make([][]byte, 0, len(buf)/lim+1)
+	for len(buf) >= lim {
+		chunk, buf = buf[:lim], buf[lim:]
+		chunks = append(chunks, chunk)
+	}
+	if len(buf) > 0 {
+		chunks = append(chunks, buf[:])
+	}
+	return chunks
 }

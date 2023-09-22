@@ -403,6 +403,7 @@ func (d *DistKeyGenerator) ProcessDeals(bundles []*DealBundle) (*ResponseBundle,
 
 	seenIndex := make(map[uint32]bool)
 	for _, bundle := range bundles {
+		d.c.Info("Processing deal from", bundle.DealerIndex)
 		if bundle == nil {
 			d.c.Error("found nil Deal bundle")
 			continue
@@ -453,6 +454,7 @@ func (d *DistKeyGenerator) ProcessDeals(bundles []*DealBundle) (*ResponseBundle,
 				break
 			}
 			if deal.ShareIndex != uint32(d.nidx) {
+				d.c.Error("we dont look at other's shares")
 				// we dont look at other's shares
 				continue
 			}
@@ -482,6 +484,7 @@ func (d *DistKeyGenerator) ProcessDeals(bundles []*DealBundle) (*ResponseBundle,
 				publicCommit := pubPoly.Commit()
 				if !oldShareCommit.Equal(publicCommit) {
 					// inconsistent share from old member
+					d.c.Error(" inconsistent share from old member")
 					continue
 				}
 			}
