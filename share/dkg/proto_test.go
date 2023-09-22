@@ -258,8 +258,8 @@ func TestProtoResharing(t *testing.T) {
 	// RESHARING
 	// we setup now the second group with one node left from old group and two
 	// new node
-	newN := n + 1
-	newT := thr + 1
+	newN := n + 3
+	newT := thr + 3
 	var newTns = make([]*TestNode, newN)
 	// offline := 1
 	// copy(newTns, tns[:n])
