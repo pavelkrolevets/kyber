@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/drand/kyber"
+	kyber_bls12381 "github.com/drand/kyber-bls12381"
 	"github.com/drand/kyber/group/edwards25519"
 	"github.com/drand/kyber/pairing/bn256"
 	"github.com/drand/kyber/share"
@@ -138,6 +139,34 @@ func testResults(t *testing.T, suite Suite, thr, n int, results []*Result) {
 	expKey := results[0].Key.Public()
 	require.True(t, public.Equal(expKey))
 
+}
+
+func testSign(t *testing.T, suite Suite, thr, n int, results []*Result, msg []byte, pubPoly *share.PubPoly) []byte {
+	// test if all results are consistent
+	for i, res := range results {
+		require.Equal(t, thr, len(res.Key.Commitments()))
+		for j, res2 := range results {
+			if i == j {
+				continue
+			}
+			require.True(t, res.PublicEqual(res2), "res %+v != %+v", res, res2)
+		}
+	}
+	// test if re-creating secret key gives same public key
+	var shares []*share.PriShare
+	for _, res := range results {
+		shares = append(shares, res.Key.PriShare())
+	}
+	scheme := tbls.NewThresholdSchemeOnG2(kyber_bls12381.NewBLS12381Suite())
+	var sigs [][]byte
+	for _, x := range shares {
+		sig, err := scheme.Sign(x, msg)
+		require.NoError(t, err)
+		sigs = append(sigs, sig)
+	}
+	recoveredSig, err := scheme.Recover(pubPoly, msg, sigs, thr, n)
+	require.NoError(t, err)
+	return recoveredSig
 }
 
 type MapDeal func([]*DealBundle) []*DealBundle

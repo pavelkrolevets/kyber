@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"github.com/drand/kyber"
-	bls3 "github.com/drand/kyber-bls12381"
+	kyber_bls12381 "github.com/drand/kyber-bls12381"
 	"github.com/drand/kyber/group/edwards25519"
+	"github.com/drand/kyber/share"
 	drand_bls "github.com/drand/kyber/sign/bls"
 	"github.com/drand/kyber/sign/schnorr"
+	"github.com/drand/kyber/sign/tbls"
 	"github.com/drand/kyber/util/random"
 	clock "github.com/jonboulle/clockwork"
 	"github.com/sirupsen/logrus"
@@ -203,7 +205,7 @@ func TestProtoResharing(t *testing.T) {
 	n := 4
 	thr := 3
 	period := 1 * time.Second
-	suite := bls3.NewBLS12381Suite()
+	suite := kyber_bls12381.NewBLS12381Suite()
 	tns := GenerateTestNodes(suite.G1().(Suite), n)
 	list := NodesFromTest(tns)
 	network := NewTestNetwork(n)
@@ -244,59 +246,38 @@ func TestProtoResharing(t *testing.T) {
 	}
 
 	// expect all results
-	var results []*Result
+	var resultsDKG []*Result
 	for optRes := range resCh {
 		require.NoError(t, optRes.Error)
-		results = append(results, optRes.Result)
-		if len(results) == n {
+		resultsDKG = append(resultsDKG, optRes.Result)
+		if len(resultsDKG) == n {
 			break
 		}
 	}
-	testResults(t, suite.G1().(Suite), thr, n, results)
+	testResults(t, suite.G1().(Suite), thr, n, resultsDKG)
+	fmt.Printf("Result pub key %s \n", resultsDKG[0].Key.Public().String())
 	fmt.Printf("\n\n ----- RESHARING ----\n\n")
 
 	// RESHARING
 	// we setup now the second group with one node left from old group and two
 	// new node
-	newN := n + 3
-	newT := thr + 3
-	var newTns = make([]*TestNode, newN)
-	// offline := 1
-	// copy(newTns, tns[:n])
-	// + offline because we fill the gap of the offline nodes by new nodes
-	// newNode := newN - n + offline
-	newNode := newN - n
-	//  new node can have the same index as a previous one, separation is made
-	// newTns[n-1] = NewTestNode(suite, n-1)
-	// newTns[n] = NewTestNode(suite, n)
-	for i := 0; i < newNode; i++ {
-		//  new node can have the same index as a previous one, separation is made
-		// newTns[n-offline+i] = NewTestNode(suite, n-offline+i)
-		newTns[n+i] = NewTestNode(suite.G1().(Suite), n+i)
+	newN := 6
+	newT := 5
+	var newTns = make([]*TestNode, 0)
+	for i := 0; i < newN; i++ {
+		newNode := NewTestNode(suite.G1().(Suite), n+i)
+		newTns = append(newTns, newNode)
 	}
-	for i, n := range tns[:n] {
-		t.Logf("Old Nodes %v", n.dkg.long)
-		newTns[i] = NewTestNode(suite.G1().(Suite), i)
-		// newTns[i].Private.Set(n.Private)
-		// newTns[i].Public.Set(n.Public)
-		newTns[i].Private = n.Private
-		newTns[i].Public = n.Public
-		// newTns[i].Index = n.Index
-		newTns[i].res = n.res
-		// newTns[i].res = n.res
-		// newTns[i].proto = n.proto
-		// newTns[i].board = n.board
-	}
-	network = NewTestNetwork(newN)
+	network = NewTestNetwork(n + newN)
 	newList := NodesFromTest(newTns)
-	oldList := NodesFromTest(newTns[:n])
-	for _, n := range list {
-		t.Logf("Old Node %d, %s", n.Index, n.Public.String())
+	// recreate old nodes
+	var oldTns = make([]*TestNode, 0)
+	for i, n := range tns {
+		oldNode := NewTestNode(suite.G1().(Suite), i)
+		oldNode.res = n.res
+		oldTns = append(oldTns, oldNode)
 	}
-	for _, n := range newList {
-		t.Logf("New Node %d, %s", n.Index, n.Public.String())
-	}
-
+	oldList := NodesFromTest(oldTns)
 	newConf := &Config{
 		Suite:        suite.G1().(Suite),
 		NewNodes:     newList,
@@ -321,12 +302,12 @@ func TestProtoResharing(t *testing.T) {
 		coefs = append(coefs, p)
 	}
 
-	SetupReshareNodes(newTns, newConf, coefs)
-	SetupProto(newTns, newConf, period, network)
+	SetupReshareNodes(append(oldTns, newTns...), newConf, coefs)
+	SetupProto(append(oldTns, newTns...), newConf, period, network)
 
 	resCh = make(chan OptionResult, 1)
 	// start all nodes and wait until each end
-	for _, node := range newTns {
+	for _, node := range append(oldTns, newTns...) {
 		go func(n *TestNode) {
 			optRes := <-n.proto.WaitEnd()
 			n.res = optRes.Result
@@ -337,7 +318,9 @@ func TestProtoResharing(t *testing.T) {
 	for _, node := range newTns {
 		go node.phaser.Start()
 	}
-	time.Sleep(100 * time.Millisecond)
+	for _, node := range oldTns {
+		go node.phaser.Start()
+	}
 	// move three periods:
 	// nodes already sent they deals, so they need to receive them after one
 	// period, then they send their responses. Second period to receive the
@@ -349,17 +332,33 @@ func TestProtoResharing(t *testing.T) {
 	}
 
 	// expect all results
-	results = nil
+	var resultsResharing []*Result
 	for optRes := range resCh {
 		require.NoError(t, optRes.Error)
-		results = append(results, optRes.Result)
-		fmt.Printf("GOT %d RESULTS\n", len(results))
-		if len(results) == newN {
+		resultsResharing = append(resultsResharing, optRes.Result)
+		fmt.Printf("GOT %d RESULTS\n", len(resultsResharing))
+		if len(resultsResharing) == newN {
 			break
 		}
 	}
-	testResults(t, suite.G1().(Suite), newT, newN, results)
-	fmt.Printf("Result pub key %s \n", results[0].Key.Public().String())
+	testResults(t, suite.G1().(Suite), newT, newN, resultsResharing)
+	fmt.Printf("Result pub key %s \n", resultsResharing[0].Key.Public().String())
+	require.Equal(t, resultsResharing[0].Key.Public().String(), resultsDKG[0].Key.Public().String())
+
+	pubPolyOldNodes := share.NewPubPoly(suite.G1().(Suite), suite.G1().(Suite).Point().Base(), resultsDKG[0].Key.Commitments())
+	pubPolyNewNodes := share.NewPubPoly(suite.G1().(Suite), suite.G1().(Suite).Point().Base(), resultsResharing[0].Key.Commitments())
+	require.Equal(t, pubPolyOldNodes.Commit().String(), pubPolyNewNodes.Commit().String())
+
+	scheme := tbls.NewThresholdSchemeOnG2(kyber_bls12381.NewBLS12381Suite())
+
+	// Check if we can sign and verify old nodes with same pub
+	recoveredSig := testSign(t, suite.G1().(Suite), thr, n, resultsDKG, []byte("Hello World"), pubPolyOldNodes)
+	err := scheme.VerifyRecovered(pubPolyOldNodes.Commit(), []byte("Hello World"), recoveredSig)
+	require.NoError(t, err)
+	// Check if we can sign and verify new nodes with same pub
+	recoveredSig = testSign(t, suite.G1().(Suite), newT, newN, resultsResharing, []byte("Hello World"), pubPolyNewNodes)
+	err = scheme.VerifyRecovered(pubPolyOldNodes.Commit(), []byte("Hello World"), recoveredSig)
+	require.NoError(t, err)
 }
 
 func TestProtoThreshold(t *testing.T) {

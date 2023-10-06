@@ -403,7 +403,6 @@ func (d *DistKeyGenerator) ProcessDeals(bundles []*DealBundle) (*ResponseBundle,
 
 	seenIndex := make(map[uint32]bool)
 	for _, bundle := range bundles {
-		d.c.Info("Processing deal from", bundle.DealerIndex)
 		if bundle == nil {
 			d.c.Error("found nil Deal bundle")
 			continue
